@@ -22,9 +22,14 @@ type struct_result struct {
 	query_dbs_result *sql.Rows
 	query_dba_result *sql.Rows
 }
+type struct_result_md5 struct {
+	query_dbs_md5 string
+	query_dba_md5 string
+}
 
 func main() {
-	ch := make(chan struct_result, 1000)
+	ch_result := make(chan struct_result, 1000)
+	ch_md5 := make(chan struct_result_md5, 1000)
 	t1 := time.Now()
 	//初始化命令行参数
 	shost, sport, ahost, aport, user, passowrd, database, table, chunksize := help()
@@ -90,23 +95,38 @@ func main() {
 	chunk_count := chunk_table(count_int, chunk_count_remainder, chunksize)
 	log.Debugf("chunk数目为:%d", chunk_count)
 
-	//开启10个goroutine去处理
+	//开启10个goroutine去比较md5
+	for d := 0; d <= 10; d++ {
+		go func() {
+			for {
+				srm := <-ch_md5
+				chunk_checktable(srm.query_dbs_md5, srm.query_dba_md5)
+			}
+		}()
+	}
+
+	//开启10个goroutine去生成MD5
 	for c := 0; c <= 10; c++ {
 		go func() {
 			for {
-				sr := <-ch
+				sr := <-ch_result
 				query_dbs_md5 := encryption(printResult(sr.query_dbs_result))
 				query_dba_md5 := encryption(printResult(sr.query_dba_result))
-				chunk_checktable(query_dbs_md5, query_dba_md5)
+				var srm struct_result_md5
+				srm.query_dbs_md5 = query_dbs_md5
+				srm.query_dba_md5 = query_dba_md5
+				ch_md5 <- srm
 			}
 		}()
 	}
 
 	//循环执行chunk_count次并做校验
-	bar := pb.StartNew(chunk_count) //进度条
+	bar := pb.StartNew(chunk_count) //校验进度条
 	var j int = 0
 	for i := 0; i < chunk_count; i++ {
-		sql_exec := "select * from " + table + " order by " + pri_key + " limit " + strconv.Itoa(j) + "," + strconv.Itoa(chunksize)
+		//考虑发号器导致的不规则连续性，第一个版本先采用主键延迟关联查询的方式
+		sql_exec := "SELECT a.* FROM " + table + " a, (select " + pri_key + " from " + table + " ORDER BY " + pri_key + " limit " + strconv.Itoa(j) + "," + strconv.Itoa(chunksize) + " ) b where a." + pri_key + "=b." + pri_key
+		//log.Debugf("执行的sql是%s", sql_exec)
 		query_dbs_result, err := dbs.Query(sql_exec)
 		checkErr(err)
 		query_dba_result, err := dba.Query(sql_exec)
@@ -114,13 +134,11 @@ func main() {
 		var sr struct_result
 		sr.query_dbs_result = query_dbs_result
 		sr.query_dba_result = query_dba_result
-		ch <- sr
+		ch_result <- sr
 		j = j + chunksize
 		bar.Increment()
 		time.Sleep(time.Millisecond)
 	}
-	//bar.Increment()
-	//time.Sleep(time.Millisecond)
 
 	elapsed := time.Since(t1)
 	log.Debugf("耗时:%s", elapsed)
