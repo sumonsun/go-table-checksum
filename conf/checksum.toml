@@ -1,0 +1,32 @@
+#每次取chunksize行数据进行校验
+chunksize=1000
+#启动多少个goroutine去校验
+goroutine=20
+
+[log]
+log_path = "log/Tablecheck.log"
+# 0 单个文件 1按天分 2按小时分
+type = 2
+highlighting = false
+level = "debug"
+
+#定义源数据库实例信息
+[[mysqlsource]]
+addr = "10.10.106.218"
+port = "3308"
+user = "inception"
+password = "inception"
+
+#目标数据库实例信息
+[[mysqlaims]]
+addr = "10.10.106.218"
+port = "3308"
+user = "inception"
+password = "inception"
+
+#校验的库表信息,目前先到表
+[checkinfo]
+database="fans_online2"
+table='users'
+
+
